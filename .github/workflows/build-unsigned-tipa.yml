@@ -35,13 +35,14 @@ jobs:
             deps/libs
             deps/include
             deps/resources
-          key: ios-native-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('deps/build_lame.sh', 'deps/build_ffmpeg.sh', 'deps/build_ish.sh', 'deps/prepare_alpine_rootfs.sh', '.gitmodules') }}
+          key: ios-native-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('deps/build_lame.sh', 'deps/build_ffmpeg.sh', 'deps/build_ish.sh', 'deps/build_rclone_ios.sh', 'deps/prepare_alpine_rootfs.sh', '.gitmodules') }}
 
       - name: Build native dependencies
         run: |
           ./deps/build_lame.sh
           ./deps/build_ffmpeg.sh
           ./deps/build_ish.sh
+          ./deps/build_rclone_ios.sh
           ./deps/prepare_alpine_rootfs.sh
 
       - name: Build unsigned iOS app
