@@ -47,6 +47,7 @@ static NSString *const HELP_TEXT =
      "  hover           --selector <css>\n"
      "  get_readable\n"
      "  set_user_agent  --user-agent mobile_safari|desktop_safari|custom\n"
+     "                  For custom, also pass --custom-user-agent <literal UA>\n"
      "  set_viewport    --width <n> --height <n> | --reset\n"
      "                  Override the viewport for this session only. Without\n"
      "                  --reset it shadows the app-wide default from Browser\n"
@@ -190,6 +191,10 @@ static NSDictionary *buildInputJson(int argc, char **argv, NSString **errOut) {
     s = noff_find_arg(argc, argv, "--user-agent");
     if (!s) s = noff_find_arg(argc, argv, "--ua");
     if (s) obj[@"user_agent"] = s;
+
+    s = noff_find_arg(argc, argv, "--custom-user-agent");
+    if (!s) s = noff_find_arg(argc, argv, "--custom-ua");
+    if (s) obj[@"custom_user_agent"] = s;
 
     // Integer options: accept hyphen and underscore variants.
     struct { const char *primary; const char *alt; NSString *key; } intOpts[] = {
