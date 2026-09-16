@@ -13,6 +13,12 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Install Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: deps/rclone-mobile/go.mod
+          cache-dependency-path: deps/rclone-mobile/go.sum
+
       - name: Install native build tools
         run: |
           brew install ninja llvm lld libarchive pkg-config
