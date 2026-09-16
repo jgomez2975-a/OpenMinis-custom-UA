@@ -113,10 +113,7 @@ struct BrowserManagementView: View {
         let isSelected = pool.userAgentProfile == .custom
         return VStack(alignment: .leading, spacing: 6) {
             Button {
-                if !customUA.isEmpty {
-                    pool.customUserAgentString = customUA
-                    pool.setUserAgentProfile(.custom)
-                }
+                applyCustomUserAgent()
             } label: {
                 HStack {
                     Label("Custom", systemImage: "pencil.line")
@@ -132,10 +129,18 @@ struct BrowserManagementView: View {
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(.secondary)
                 .lineLimit(2...4)
-                .onSubmit {
-                    pool.customUserAgentString = customUA
-                    pool.setUserAgentProfile(.custom)
-                }
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .submitLabel(.done)
+                .onSubmit { applyCustomUserAgent() }
+            Button {
+                applyCustomUserAgent()
+            } label: {
+                Label(isSelected ? "Apply and Reload Tabs" : "Use Custom User Agent",
+                      systemImage: "checkmark.circle")
+            }
+            .buttonStyle(.borderless)
+            .disabled(trimmedCustomUA.isEmpty)
         }
         .onAppear {
             customUA = pool.customUserAgentString
@@ -149,6 +154,17 @@ struct BrowserManagementView: View {
                 }
             }
         }
+    }
+
+    private var trimmedCustomUA: String {
+        customUA.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func applyCustomUserAgent() {
+        guard !trimmedCustomUA.isEmpty else { return }
+        customUA = trimmedCustomUA
+        pool.customUserAgentString = trimmedCustomUA
+        pool.setUserAgentProfile(.custom)
     }
 
     // MARK: - Viewport Section
