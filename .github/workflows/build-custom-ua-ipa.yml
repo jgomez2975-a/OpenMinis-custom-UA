@@ -27,7 +27,9 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          brew install ninja llvm libarchive pkg-config meson
+          brew install ninja llvm lld libarchive pkg-config meson
+          echo "/opt/homebrew/opt/llvm/bin" >> "$GITHUB_PATH"
+          echo "/opt/homebrew/opt/lld/bin" >> "$GITHUB_PATH"
 
       - name: Create build customization config
         run: |
