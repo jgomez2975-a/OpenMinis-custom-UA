@@ -299,7 +299,17 @@ final class BrowserUseManager: NSObject, ObservableObject {
         case .getReadable:
             return try await getReadable()
         case .setUserAgent:
-            return setUserAgent(profile: input.userAgent)
+            let raw = input.userAgent ?? UserAgentProfile.mobileSafari.rawValue
+            if let profile = UserAgentProfile(rawValue: raw) {
+                return setUserAgent(profile: profile)
+            }
+            let custom = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !custom.isEmpty,
+                  custom.count <= 1024,
+                  custom.rangeOfCharacter(from: .newlines.union(.controlCharacters)) == nil else {
+                return .error("Invalid custom User-Agent")
+            }
+            return setUserAgent(profile: .custom, customString: custom)
         case .setViewport:
             // Routed by BrowserTabPool.execute — pool mutates all tabs; this
             // path only hits if execute is called directly on a detached manager.

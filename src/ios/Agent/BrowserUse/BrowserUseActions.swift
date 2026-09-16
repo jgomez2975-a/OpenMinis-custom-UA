@@ -39,9 +39,8 @@ struct BrowserActionInput {
     let direction: ScrollDirection?
     let amount: Int?
     let script: String?
-    let userAgent: UserAgentProfile?
-    /// A literal User-Agent string used with `set_user_agent` and `user_agent: "custom"`.
-    var customUserAgent: String? = nil
+    /// A named profile (`mobile_safari` / `desktop_safari`) or a literal UA.
+    let userAgent: String?
     let maxDepth: Int?
     let tabId: Int?
     var scrollCount: Int? = nil
@@ -87,11 +86,7 @@ struct BrowserActionInput {
             direction: (dict["direction"] as? String).flatMap(ScrollDirection.init),
             amount: dict["amount"] as? Int,
             script: dict["script"] as? String,
-            userAgent: (dict["user_agent"] as? String).flatMap(UserAgentProfile.init),
-            customUserAgent: (dict["custom_user_agent"] as? String).flatMap {
-                let value = $0.trimmingCharacters(in: .whitespacesAndNewlines)
-                return value.isEmpty ? nil : value
-            },
+            userAgent: dict["user_agent"] as? String,
             maxDepth: dict["max_depth"] as? Int,
             tabId: dict["tab_id"] as? Int,
             scrollCount: dict["scroll_count"] as? Int,

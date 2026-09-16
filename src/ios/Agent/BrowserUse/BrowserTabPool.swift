@@ -864,16 +864,27 @@ final class BrowserTabPool: ObservableObject {
         // Sync user-agent changes through the pool so all tabs + future tabs update.
         // Agent-driven switches are temporary — don't persist to UserDefaults.
         if input.action == .setUserAgent {
-            let profile = input.userAgent ?? .mobileSafari
-            if profile == .custom {
-                guard let customUA = input.customUserAgent else {
-                    return .error("set_user_agent with user_agent=custom requires a non-empty custom_user_agent")
+            let raw = input.userAgent ?? UserAgentProfile.mobileSafari.rawValue
+            let profile: UserAgentProfile
+            let customString: String?
+            if let namedProfile = UserAgentProfile(rawValue: raw) {
+                profile = namedProfile
+                customString = namedProfile == .custom ? customUserAgentString : nil
+            } else {
+                let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else {
+                    return .error("set_user_agent requires a named profile or a non-empty custom User-Agent")
                 }
-                customUserAgentString = customUA
+                guard trimmed.count <= 1024,
+                      trimmed.rangeOfCharacter(from: .newlines.union(.controlCharacters)) == nil else {
+                    return .error("Custom User-Agent must be at most 1024 characters and contain no control characters")
+                }
+                profile = .custom
+                customString = trimmed
             }
-            setUserAgentProfile(profile, persist: false)
-            let vp = resolvedViewportSize()
-            let label = profile == .custom ? "custom user agent" : profile.rawValue
+            setUserAgentProfile(profile, customString: customString, persist: false)
+            let vp = profile.viewportSize
+            let label = profile == .custom ? "custom User-Agent" : profile.rawValue
             return BrowserActionResult(text: "Switched to \(label) (\(vp.width)x\(vp.height))")
         }
 
@@ -1392,7 +1403,12 @@ final class BrowserTabPool: ObservableObject {
     /// Switch user-agent profile for all existing tabs and future ones.
     /// - Parameter persist: When `true` (default), saves to UserDefaults as the new default.
     ///   Pass `false` for temporary agent-driven switches that should not outlive the session.
-    func setUserAgentProfile(_ profile: UserAgentProfile, persist: Bool = true) {
+    func setUserAgentProfile(_ profile: UserAgentProfile,
+                             customString: String? = nil,
+                             persist: Bool = true) {
+        if profile == .custom, let customString {
+            customUserAgentString = customString
+        }
         userAgentProfile = profile
         if persist {
             UserDefaults.standard.set(profile.rawValue, forKey: Self.uaProfileKey)
