@@ -15,7 +15,10 @@ jobs:
 
       - name: Install native build tools
         run: |
-          brew install ninja llvm libarchive pkg-config
+          brew install ninja llvm lld libarchive pkg-config
+          echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix lld)/bin" >> "$GITHUB_PATH"
+          ln -sf "$(brew --prefix lld)/bin/ld.lld" "$(brew --prefix llvm)/bin/ld.lld"
           python3 -m pip install --break-system-packages meson
 
       - name: Prepare build customization
