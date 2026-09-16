@@ -40,6 +40,8 @@ struct BrowserActionInput {
     let amount: Int?
     let script: String?
     let userAgent: UserAgentProfile?
+    /// A literal User-Agent string used with `set_user_agent` and `user_agent: "custom"`.
+    var customUserAgent: String? = nil
     let maxDepth: Int?
     let tabId: Int?
     var scrollCount: Int? = nil
@@ -86,6 +88,10 @@ struct BrowserActionInput {
             amount: dict["amount"] as? Int,
             script: dict["script"] as? String,
             userAgent: (dict["user_agent"] as? String).flatMap(UserAgentProfile.init),
+            customUserAgent: (dict["custom_user_agent"] as? String).flatMap {
+                let value = $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                return value.isEmpty ? nil : value
+            },
             maxDepth: dict["max_depth"] as? Int,
             tabId: dict["tab_id"] as? Int,
             scrollCount: dict["scroll_count"] as? Int,
