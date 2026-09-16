@@ -42,6 +42,7 @@ jobs:
           set -euo pipefail
           ./deps/build_lame.sh
           ./deps/build_ffmpeg.sh
+          ./deps/build_rclone_ios.sh
           ./deps/build_ish.sh
           ./deps/prepare_alpine_rootfs.sh
 
