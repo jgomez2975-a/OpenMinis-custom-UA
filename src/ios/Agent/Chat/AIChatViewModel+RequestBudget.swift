@@ -258,19 +258,31 @@ extension AIChatViewModel {
     /// FileProvider extension. Keep ONLY user-facing subdirs (shared, skills,
     /// memory) here — anything else leaks into "On My iPhone → Minis".
     nonisolated static var minisAppGroupRoot: URL {
-        FileManager.default.containerURL(
+        let fm = FileManager.default
+        if let container = fm.containerURL(
             forSecurityApplicationGroupIdentifier: SharedContainerStore.appGroupID
-        )!.appendingPathComponent("MinisFileProvider", isDirectory: true)
+        ) {
+            return container.appendingPathComponent("MinisFileProvider", isDirectory: true)
+        }
+
+        // Unsigned/TrollStore installs may not retain the App Group entitlement,
+        // especially when the bundle identifier is changed during installation.
+        // Keep the app usable in its private container; only extensions lose access.
+        let library = fm.urls(for: .libraryDirectory, in: .userDomainMask).first!
+        return library.appendingPathComponent("MinisChat", isDirectory: true)
     }
 
     /// App Group subdirectory for private metadata that must NOT be exposed
     /// to iOS Files (mounted-folders.json, FileProvider extension logs, etc).
     /// Sibling of `minisAppGroupRoot` inside the same App Group container.
     nonisolated static var minisConfigRoot: URL {
-        let url = FileManager.default.containerURL(
+        let fm = FileManager.default
+        let base = fm.containerURL(
             forSecurityApplicationGroupIdentifier: SharedContainerStore.appGroupID
-        )!.appendingPathComponent("MinisConfig", isDirectory: true)
-        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        ) ?? fm.urls(for: .libraryDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("MinisChat", isDirectory: true)
+        let url = base.appendingPathComponent("MinisConfig", isDirectory: true)
+        try? fm.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }
 
