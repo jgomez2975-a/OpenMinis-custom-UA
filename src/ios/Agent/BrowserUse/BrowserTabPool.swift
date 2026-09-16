@@ -865,9 +865,16 @@ final class BrowserTabPool: ObservableObject {
         // Agent-driven switches are temporary — don't persist to UserDefaults.
         if input.action == .setUserAgent {
             let profile = input.userAgent ?? .mobileSafari
+            if profile == .custom {
+                guard let customUA = input.customUserAgent else {
+                    return .error("set_user_agent with user_agent=custom requires a non-empty custom_user_agent")
+                }
+                customUserAgentString = customUA
+            }
             setUserAgentProfile(profile, persist: false)
-            let vp = profile.viewportSize
-            return BrowserActionResult(text: "Switched to \(profile.rawValue) (\(vp.width)x\(vp.height))")
+            let vp = resolvedViewportSize()
+            let label = profile == .custom ? "custom user agent" : profile.rawValue
+            return BrowserActionResult(text: "Switched to \(label) (\(vp.width)x\(vp.height))")
         }
 
         // Session-scoped viewport override. --reset clears, otherwise set.
