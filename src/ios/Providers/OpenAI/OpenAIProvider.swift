@@ -863,6 +863,29 @@ final class OpenAIProvider: LLMProvider {
         for (key, value) in extraHeaders {
             request.setValue(value, forHTTPHeaderField: key)
         }
+
+        // Some API-key relays expose a Codex-only Responses endpoint. Their
+        // admission layer accepts the Codex User-Agent, while the streaming
+        // backend also relies on the remaining Codex CLI fingerprint and stable
+        // conversation headers. Treat an explicitly configured Codex UA as the
+        // user's opt-in; ordinary custom endpoints retain their existing shape.
+        let configuredUA = extraHeaders.first {
+            $0.key.caseInsensitiveCompare("User-Agent") == .orderedSame
+        }?.value ?? ""
+        let isCodexRelay = isResponsesAPI
+            && (configuredUA.hasPrefix("codex-tui/") || configuredUA.hasPrefix("codex_cli_rs/"))
+        if isCodexRelay {
+            let version = configuredUA.split(separator: " ").first?
+                .split(separator: "/").dropFirst().first.map(String.init)
+                ?? Self.codexClientVersion
+            request.setValue(version, forHTTPHeaderField: "Version")
+            request.setValue("responses=experimental", forHTTPHeaderField: "OpenAI-Beta")
+            request.setValue("codex_cli_rs", forHTTPHeaderField: "Originator")
+            if let cacheKey = body["prompt_cache_key"] as? String, !cacheKey.isEmpty {
+                request.setValue(cacheKey, forHTTPHeaderField: "Session_id")
+                request.setValue(cacheKey, forHTTPHeaderField: "Conversation_id")
+            }
+        }
         // [T-ios-openai-body-oom] Must run BEFORE serializing: an out-of-memory
         // inside JSONSerialization aborts the process and cannot be caught. This
         // is the agent loop's request path, where the body grows with every turn.
