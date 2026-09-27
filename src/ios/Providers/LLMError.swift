@@ -65,24 +65,63 @@ enum LLMError: LocalizedError {
         return String(oneLine.prefix(limit))
     }
 
+    private static func localizedDetail(_ text: String) -> String {
+        let lower = text.lowercased()
+        if lower.contains("service temporarily unavailable") || lower.contains("temporarily unavailable") {
+            return "服务暂时不可用"
+        }
+        if lower.contains("gateway returned an html error page") {
+            return "网关返回了错误页面"
+        }
+        if lower.contains("request timed out") || lower.contains("timed out") || lower.contains("timeout") {
+            return "请求超时"
+        }
+        if lower.contains("empty response") {
+            return "服务器返回空响应"
+        }
+        if lower.contains("connection reset") {
+            return "连接被服务器重置"
+        }
+        if lower.contains("connection refused") {
+            return "服务器拒绝了连接"
+        }
+        return text
+    }
+
+    private static func localizedNetworkError(_ error: Error) -> String {
+        let nsError = error as NSError
+        if nsError.domain == NSURLErrorDomain {
+            switch nsError.code {
+            case NSURLErrorTimedOut: return "请求超时"
+            case NSURLErrorNotConnectedToInternet: return "当前没有网络连接"
+            case NSURLErrorCannotConnectToHost: return "无法连接到服务器"
+            case NSURLErrorNetworkConnectionLost: return "网络连接中断"
+            case NSURLErrorDNSLookupFailed: return "域名解析失败"
+            case NSURLErrorSecureConnectionFailed: return "安全连接失败"
+            default: break
+            }
+        }
+        return localizedDetail(error.localizedDescription)
+    }
+
     var errorDescription: String? {
         switch self {
         case .invalidAPIKey(let detail):
-            return detail.isEmpty ? "Invalid API key" : "Invalid API key: \(detail)"
+            return detail.isEmpty ? "API 密钥无效" : "API 密钥无效：\(Self.localizedDetail(detail))"
         case .networkError(let error):
-            return "Network error: \(error.localizedDescription)"
+            return "网络错误：\(Self.localizedNetworkError(error))"
         case .providerError(let message):
-            return "Provider error: \(message)"
+            return "服务商错误：\(Self.localizedDetail(message))"
         case .transientError(let message):
-            return "Service temporarily unavailable: \(message)"
+            return "服务暂时不可用：\(Self.localizedDetail(message))"
         case .decodingError(let error):
-            return "Decoding error: \(error.localizedDescription)"
+            return "响应解析失败：\(Self.localizedDetail(error.localizedDescription))"
         case .rateLimited:
-            return "Rate limited — please try again later"
+            return "请求过于频繁，请稍后再试"
         case .cancelled:
-            return "Request was cancelled"
+            return "请求已取消"
         case .unknown(let error):
-            return "Unknown error: \(error?.localizedDescription ?? "no details")"
+            return "未知错误：\(error.map { Self.localizedDetail($0.localizedDescription) } ?? "暂无详细信息")"
         }
     }
 
@@ -110,10 +149,14 @@ enum LLMError: LocalizedError {
     /// auto-retry is exhausted on the current model, group fallback kicks in.
     var fallbackReason: String {
         switch self {
-        case .rateLimited: return "Rate limited"
-        case .invalidAPIKey: return "Invalid API key"
-        case .providerError(let msg): return "Provider error: \(String(msg.prefix(60)))"
-        default: return "Error"
+        case .rateLimited: return "请求频繁，已限流"
+        case .invalidAPIKey: return "API 密钥无效"
+        case .providerError(let msg): return "服务商错误：\(String(msg.prefix(60)))"
+        case .transientError(let msg): return "服务暂时不可用：\(String(msg.prefix(60)))"
+        case .networkError: return "网络错误"
+        case .decodingError: return "响应解析失败"
+        case .cancelled: return "请求已取消"
+        case .unknown: return "未知错误"
         }
     }
 
