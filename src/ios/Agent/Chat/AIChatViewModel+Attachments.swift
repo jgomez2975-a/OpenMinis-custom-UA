@@ -1,6 +1,7 @@
 import Foundation
 import UIKit
 import UniformTypeIdentifiers
+import AVFoundation
 
 private let logger = AppLogger(category: "AIChatVM")
 
@@ -126,10 +127,15 @@ extension AIChatViewModel {
         }
     }
 
-    /// Resolve a `.loading` video placeholder by copying the loaded file in and
-    /// flipping to `.ready`. Mirrors `addFileAttachment` but targets an existing
-    /// placeholder so the chip doesn't jump to the end.
-    func finalizeVideoPlaceholder(id: UUID, from sourceURL: URL, originalDate: Date? = nil) {
+    /// Resolve a `.loading` video placeholder, then sample representative frames
+    /// and append them as ordinary image attachments. Most chat-completions
+    /// providers cannot consume a MOV/MP4 directly; turning it into a bounded
+    /// contact sequence lets the existing image pipeline actually inspect it.
+    ///
+    /// Extraction is performed off the main actor. The original video is still
+    /// persisted and included in `<user-attached-files>`, while up to 12 JPEG
+    /// frames are inlined under the same global image-context budget as photos.
+    func finalizeVideoPlaceholder(id: UUID, from sourceURL: URL, originalDate: Date? = nil) async {
         guard attachments.contains(where: { $0.id == id }) else { return }
         let fm = FileManager.default
         let dir = attachmentCacheDir
@@ -143,15 +149,94 @@ extension AIChatViewModel {
             if let date = originalDate {
                 try? fm.setAttributes([.creationDate: date, .modificationDate: date], ofItemAtPath: destURL.path)
             }
-            guard let i = attachments.firstIndex(where: { $0.id == id }) else { return }
-            attachments[i].fileName = fileName
-            attachments[i].cacheURL = destURL
-            attachments[i].kind = .video
-            attachments[i].loadState = .ready
+
+            // Keep extraction bounded across multi-video selections. Distribute
+            // the shared image budget deterministically across every selected
+            // video, including placeholders still loading concurrently, so 50
+            // videos can never race and each reserve 12 frames for itself.
+            let nonVideoImages = attachments.filter {
+                $0.kind == .image && $0.sourceAttachmentID == nil && $0.loadState == .ready
+            }.count
+            let availableFrameSlots = max(0, Self.kImageContextKeepCount - nonVideoImages)
+            let videoIDs = attachments.filter { $0.kind == .video }.map(\.id)
+            let videoOrdinal = videoIDs.firstIndex(of: id) ?? 0
+            let videoCount = max(1, videoIDs.count)
+            let baseQuota = availableFrameSlots / videoCount
+            let remainder = availableFrameSlots % videoCount
+            let frameLimit = min(12, baseQuota + (videoOrdinal < remainder ? 1 : 0))
+            let frames = frameLimit > 0
+                ? await Self.extractRepresentativeVideoFrames(from: destURL, maximumCount: frameLimit)
+                : []
+
+            guard let videoIndex = attachments.firstIndex(where: { $0.id == id }) else {
+                try? fm.removeItem(at: destURL)
+                return
+            }
+            attachments[videoIndex].fileName = fileName
+            attachments[videoIndex].cacheURL = destURL
+            attachments[videoIndex].kind = .video
+            attachments[videoIndex].loadState = .ready
+
+            var generated: [InputAttachment] = []
+            for (index, frame) in frames.enumerated() {
+                let timestamp = String(format: "%.1f", frame.seconds)
+                let frameName = "\((fileName as NSString).deletingPathExtension)_frame_\(String(format: "%02d", index + 1))_\(timestamp)s.jpg"
+                let frameURL = dir.appendingPathComponent(frameName)
+                do {
+                    try frame.data.write(to: frameURL, options: .atomic)
+                    if let date = originalDate {
+                        try? fm.setAttributes([.creationDate: date, .modificationDate: date], ofItemAtPath: frameURL.path)
+                    }
+                    generated.append(InputAttachment(
+                        fileName: frameName,
+                        cacheURL: frameURL,
+                        kind: .image,
+                        sourceAttachmentID: id
+                    ))
+                } catch {
+                    logger.error("Failed to cache video frame \(index + 1): \(error.localizedDescription)")
+                }
+            }
+            attachments.insert(contentsOf: generated, at: videoIndex + 1)
+            logger.info("Video frame sampling complete: \(generated.count) frame(s) from \(fileName)")
         } catch {
             logger.error("Failed to cache picked video: \(error.localizedDescription)")
             markPlaceholderFailed(id: id)
         }
+    }
+
+    /// Decode evenly-spaced representative frames without blocking SwiftUI.
+    /// Sampling the centre of each time segment avoids the common black first
+    /// frame and covers the whole clip rather than only its beginning.
+    nonisolated private static func extractRepresentativeVideoFrames(
+        from url: URL,
+        maximumCount: Int
+    ) async -> [(data: Data, seconds: Double)] {
+        await Task.detached(priority: .userInitiated) {
+            let asset = AVURLAsset(url: url)
+            let duration = CMTimeGetSeconds(asset.duration)
+            guard duration.isFinite, duration > 0, maximumCount > 0 else { return [] }
+
+            // Roughly one frame per three seconds, with at least three for a
+            // normal clip and an absolute cap supplied by the caller.
+            let desired = max(1, min(maximumCount, max(3, Int(ceil(duration / 3.0)))))
+            let generator = AVAssetImageGenerator(asset: asset)
+            generator.appliesPreferredTrackTransform = true
+            generator.maximumSize = CGSize(width: 1600, height: 1600)
+            generator.requestedTimeToleranceBefore = CMTime(seconds: 0.15, preferredTimescale: 600)
+            generator.requestedTimeToleranceAfter = CMTime(seconds: 0.15, preferredTimescale: 600)
+
+            var result: [(data: Data, seconds: Double)] = []
+            for index in 0..<desired {
+                guard !Task.isCancelled else { break }
+                let seconds = duration * (Double(index) + 0.5) / Double(desired)
+                let time = CMTime(seconds: seconds, preferredTimescale: 600)
+                guard let cgImage = try? generator.copyCGImage(at: time, actualTime: nil),
+                      let jpeg = UIImage(cgImage: cgImage).jpegData(compressionQuality: 0.78) else { continue }
+                result.append((jpeg, seconds))
+            }
+            return result
+        }.value
     }
 
     /// Flip a placeholder to `.failed` so its chip shows an error state the user
@@ -294,8 +379,15 @@ extension AIChatViewModel {
     }
 
     func removeAttachment(_ attachment: InputAttachment) {
-        try? FileManager.default.removeItem(at: attachment.cacheURL)
-        attachments.removeAll { $0.id == attachment.id }
+        let removed = attachments.filter {
+            $0.id == attachment.id || $0.sourceAttachmentID == attachment.id
+        }
+        for item in removed {
+            try? FileManager.default.removeItem(at: item.cacheURL)
+        }
+        attachments.removeAll {
+            $0.id == attachment.id || $0.sourceAttachmentID == attachment.id
+        }
     }
 
     /// Move an attachment from one position to another (drag-to-reorder).

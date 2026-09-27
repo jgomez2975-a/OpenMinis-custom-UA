@@ -863,6 +863,27 @@ final class OpenAIProvider: LLMProvider {
         for (key, value) in extraHeaders {
             request.setValue(value, forHTTPHeaderField: key)
         }
+
+        // Preserve the fork's Codex-relay fingerprint support. An explicitly
+        // configured Codex User-Agent is the opt-in; ordinary custom endpoints
+        // retain their normal request headers.
+        let configuredUA = extraHeaders.first {
+            $0.key.caseInsensitiveCompare("User-Agent") == .orderedSame
+        }?.value ?? ""
+        let isCodexRelay = isResponsesAPI
+            && (configuredUA.hasPrefix("codex-tui/") || configuredUA.hasPrefix("codex_cli_rs/"))
+        if isCodexRelay {
+            let version = configuredUA.split(separator: " ").first?
+                .split(separator: "/").dropFirst().first.map(String.init)
+                ?? Self.codexClientVersion
+            request.setValue(version, forHTTPHeaderField: "Version")
+            request.setValue("responses=experimental", forHTTPHeaderField: "OpenAI-Beta")
+            request.setValue("codex_cli_rs", forHTTPHeaderField: "Originator")
+            if let cacheKey = body["prompt_cache_key"] as? String, !cacheKey.isEmpty {
+                request.setValue(cacheKey, forHTTPHeaderField: "Session_id")
+                request.setValue(cacheKey, forHTTPHeaderField: "Conversation_id")
+            }
+        }
         // [T-ios-openai-body-oom] Must run BEFORE serializing: an out-of-memory
         // inside JSONSerialization aborts the process and cannot be caught. This
         // is the agent loop's request path, where the body grows with every turn.
@@ -955,8 +976,20 @@ final class OpenAIProvider: LLMProvider {
     /// Whether this provider should use the Chat Completions API shape.
     /// True for API key mode and for manual OAuth with custom base URL,
     /// unless `forceResponsesAPI` is set (Responses API provider type).
+    /// Synflux currently exposes the OpenAI-compatible Chat Completions wire
+    /// format at `/v1/chat/completions`; selecting the generic Responses
+    /// provider otherwise sends the same model to `/v1/responses`, where the
+    /// relay can sit until CFNetwork reports -1001. Keep this compatibility
+    /// decision next to the API-shape switch instead of scattering host checks
+    /// through URL construction and serializers.
+    private var requiresChatCompletionsCompatibility: Bool {
+        guard let raw = customBaseURL,
+              let host = URL(string: raw)?.host?.lowercased() else { return false }
+        return host == "synflux.org" || host.hasSuffix(".synflux.org")
+    }
+
     var usesChatCompletionsAPI: Bool {
-        if forceResponsesAPI { return false }
+        if forceResponsesAPI { return requiresChatCompletionsCompatibility }
         if !isOAuth { return true }
         // Manual OAuth with custom base URL uses Chat Completions API
         if customBaseURL != nil { return true }
@@ -2064,23 +2097,6 @@ final class OpenAIProvider: LLMProvider {
     }
 
     func mapHTTPError(statusCode: Int, body: String) -> LLMError {
-        if statusCode == 401 || statusCode == 403 { return .invalidAPIKey(detail: "HTTP \(statusCode): \(String(body.prefix(200)))") }
-        if statusCode == 429 { return .rateLimited }
-
-        // Transient server errors: retry same model, do not trigger group fallback.
-        let transientStatusCodes: Set<Int> = [500, 502, 503, 504, 529]
-        if transientStatusCodes.contains(statusCode) {
-            return .transientError(message: "HTTP \(statusCode): \(body.prefix(200))")
-        }
-
-        // Try to extract error message from JSON body
-        if let data = body.data(using: .utf8),
-           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let error = json["error"] as? [String: Any],
-           let message = error["message"] as? String {
-            return .providerError(message: "[\(statusCode)] \(message)")
-        }
-
-        return .providerError(message: "HTTP \(statusCode): \(body.prefix(500))")
+        LLMError.fromHTTP(statusCode: statusCode, body: body)
     }
 }

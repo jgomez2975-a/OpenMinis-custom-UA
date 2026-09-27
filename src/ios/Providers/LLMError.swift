@@ -12,6 +12,59 @@ enum LLMError: LocalizedError {
     case cancelled
     case unknown(underlying: Error?)
 
+    /// HTTP statuses that are normally emitted by an overloaded origin,
+    /// reverse proxy, CDN, or gateway and are safe to retry idempotently.
+    /// Includes Cloudflare's non-standard 52x family in addition to the common
+    /// 5xx responses.
+    static let transientHTTPStatusCodes: Set<Int> = [408, 425, 500, 502, 503, 504, 520, 521, 522, 523, 524, 529]
+
+    /// Build a consistently classified and user-safe HTTP error. Proxy failures
+    /// often return an entire HTML error page; never surface that markup in the
+    /// chat bubble. JSON API messages remain useful and are preserved.
+    static func fromHTTP(statusCode: Int, body: String, service: String? = nil) -> LLMError {
+        let prefix = service.map { "\($0) " } ?? ""
+        if statusCode == 401 || statusCode == 403 {
+            return .invalidAPIKey(detail: "\(prefix)HTTP \(statusCode): \(sanitizedHTTPBody(body))")
+        }
+        if statusCode == 429 { return .rateLimited }
+
+        let message = "\(prefix)HTTP \(statusCode): \(sanitizedHTTPBody(body))"
+        if transientHTTPStatusCodes.contains(statusCode) {
+            return .transientError(message: message)
+        }
+        return .providerError(message: message)
+    }
+
+    private static func sanitizedHTTPBody(_ body: String, limit: Int = 300) -> String {
+        let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "empty response" }
+
+        // Prefer structured API error messages when available.
+        if let data = trimmed.data(using: .utf8),
+           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            if let error = object["error"] as? [String: Any],
+               let message = error["message"] as? String, !message.isEmpty {
+                return String(message.prefix(limit))
+            }
+            if let message = object["message"] as? String, !message.isEmpty {
+                return String(message.prefix(limit))
+            }
+        }
+
+        let lower = trimmed.lowercased()
+        if lower.contains("<!doctype html") || lower.contains("<html") || lower.contains("cloudflare") {
+            return "gateway returned an HTML error page"
+        }
+
+        // Collapse control characters/newlines so an upstream diagnostic cannot
+        // flood or distort the message UI.
+        let oneLine = trimmed
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        return String(oneLine.prefix(limit))
+    }
+
     var errorDescription: String? {
         switch self {
         case .invalidAPIKey(let detail):

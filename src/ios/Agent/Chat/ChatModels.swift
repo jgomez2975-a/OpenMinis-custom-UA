@@ -410,6 +410,9 @@ struct InputAttachment: Identifiable {
     /// concurrent `loadTransferable` completes. Non-picker attachments are
     /// `.ready` by default so all existing construction sites are unchanged.
     var loadState: LoadState
+    /// For generated media derivatives (currently video frames), points back to
+    /// the original attachment so removing a video also removes its frame set.
+    var sourceAttachmentID: UUID?
 
     enum Kind {
         case image      // JPEG/PNG/GIF/WebP
@@ -423,12 +426,20 @@ struct InputAttachment: Identifiable {
         case failed
     }
 
-    init(id: UUID = UUID(), fileName: String, cacheURL: URL, kind: Kind, loadState: LoadState = .ready) {
+    init(
+        id: UUID = UUID(),
+        fileName: String,
+        cacheURL: URL,
+        kind: Kind,
+        loadState: LoadState = .ready,
+        sourceAttachmentID: UUID? = nil
+    ) {
         self.id = id
         self.fileName = fileName
         self.cacheURL = cacheURL
         self.kind = kind
         self.loadState = loadState
+        self.sourceAttachmentID = sourceAttachmentID
     }
 
     /// A loading placeholder shown the instant photos are picked, before bytes

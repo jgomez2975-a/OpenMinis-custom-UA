@@ -1166,9 +1166,7 @@ struct AIChatView: View {
                         group.addTask {
                             if job.isVideo {
                                 if let videoURL = try? await job.item.loadTransferable(type: VideoFileTransferable.self) {
-                                    await MainActor.run {
-                                        vm.finalizeVideoPlaceholder(id: job.id, from: videoURL.url, originalDate: job.date)
-                                    }
+                                    await vm.finalizeVideoPlaceholder(id: job.id, from: videoURL.url, originalDate: job.date)
                                 } else {
                                     await MainActor.run { vm.markPlaceholderFailed(id: job.id) }
                                 }

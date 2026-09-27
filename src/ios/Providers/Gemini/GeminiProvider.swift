@@ -629,49 +629,20 @@ final class GeminiProvider: LLMProvider {
         logger.error("Gemini streaming API error \(http.statusCode)")
         #endif
 
-        if http.statusCode == 401 || http.statusCode == 403 {
-            throw LLMError.invalidAPIKey(detail: "Gemini HTTP \(http.statusCode): \(String(body.prefix(200)))")
-        }
-        if http.statusCode == 429 {
-            throw LLMError.rateLimited
-        }
-        let transientStatusCodes: Set<Int> = [500, 502, 503, 504, 529]
-        if transientStatusCodes.contains(http.statusCode) {
-            throw LLMError.transientError(message: "Gemini API error \(http.statusCode): \(body.prefix(200))")
-        }
-        throw LLMError.providerError(message: "Gemini API error \(http.statusCode): \(body.prefix(500))")
+        throw LLMError.fromHTTP(statusCode: http.statusCode, body: body, service: "Gemini")
     }
 
     private func checkHTTPResponse(_ response: URLResponse, data: Data?) throws {
         guard let http = response as? HTTPURLResponse else { return }
+        guard !(200..<300).contains(http.statusCode) else { return }
 
-        if http.statusCode == 401 || http.statusCode == 403 {
-            let bodyStr = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
-            throw LLMError.invalidAPIKey(detail: "Gemini HTTP \(http.statusCode): \(String(bodyStr.prefix(200)))")
-        }
-
-        if http.statusCode == 429 {
-            throw LLMError.rateLimited
-        }
-
-        guard (200..<300).contains(http.statusCode) else {
-            let body: String
-            if let data {
-                body = String(data: data, encoding: .utf8) ?? ""
-            } else {
-                body = "HTTP \(http.statusCode)"
-            }
-            #if DEBUG
-            logger.error("Gemini API error \(http.statusCode): \(body.prefix(500))")
-            #else
-            logger.error("Gemini API error \(http.statusCode)")
-            #endif
-            let transientStatusCodes: Set<Int> = [500, 502, 503, 504, 529]
-            if transientStatusCodes.contains(http.statusCode) {
-                throw LLMError.transientError(message: "Gemini API error \(http.statusCode): \(body.prefix(200))")
-            }
-            throw LLMError.providerError(message: "Gemini API error \(http.statusCode): \(body.prefix(200))")
-        }
+        let body = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+        #if DEBUG
+        logger.error("Gemini API error \(http.statusCode): \(body.prefix(500))")
+        #else
+        logger.error("Gemini API error \(http.statusCode)")
+        #endif
+        throw LLMError.fromHTTP(statusCode: http.statusCode, body: body, service: "Gemini")
     }
 
     func mapError(_ error: Error) -> LLMError {

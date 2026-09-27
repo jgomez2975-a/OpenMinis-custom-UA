@@ -512,12 +512,15 @@ final class AnthropicProvider: LLMProvider {
             return .rateLimited
         }
 
-        // Transient server errors (5xx): retry same model, do not trigger group fallback.
-        let transientCodes = ["500", "502", "503", "504", "529"]
-        if transientCodes.contains(where: { description.contains($0) }) {
-            let detailedMessage = Self.extractMessageFromBody(capturedBody)
-                ?? Self.extractAPIErrorMessage(from: description)
-            return .transientError(message: detailedMessage)
+        // Transient origin / proxy / CDN failures: retry on the same model.
+        // Route them through the common formatter so an HTML gateway page is
+        // never copied verbatim into the conversation.
+        if let status = LLMError.transientHTTPStatusCodes.first(where: { description.contains(String($0)) }) {
+            return LLMError.fromHTTP(
+                statusCode: status,
+                body: capturedBody ?? description,
+                service: "Anthropic"
+            )
         }
 
         // Try to extract a detailed message from the captured error body first,
