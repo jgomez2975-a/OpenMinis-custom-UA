@@ -17,7 +17,7 @@ jobs:
       - name: Select Xcode and install tools
         run: |
           sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
-          brew install ninja llvm lld libarchive pkg-config meson
+          brew install ninja llvm lld libarchive pkg-config meson go
 
       - name: Prepare build configuration
         run: |
