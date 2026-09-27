@@ -54,22 +54,56 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             build
 
-      - name: Package TIPA
+      - name: Ad-hoc sign with required entitlements
         run: |
+          set -euo pipefail
           APP="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/Minis.app"
           test -d "$APP"
+
+          # Sign nested code first. This embeds the entitlement blobs that a
+          # TrollStore re-sign can preserve; a completely unsigned bundle gives
+          # it no way to infer the App Group / extension permissions.
+          find "$APP/Frameworks" -type d -name '*.framework' -maxdepth 1 -print0 | \
+            while IFS= read -r -d '' framework; do
+              codesign --force --sign - --timestamp=none "$framework"
+            done
+          find "$APP/Frameworks" -type f -name '*.dylib' -maxdepth 1 -print0 | \
+            while IFS= read -r -d '' dylib; do
+              codesign --force --sign - --timestamp=none "$dylib"
+            done
+
+          codesign --force --sign - --timestamp=none --generate-entitlement-der \
+            --entitlements src/ios/ShareExtension/ShareExtension.entitlements \
+            "$APP/PlugIns/MinisShare.appex"
+          codesign --force --sign - --timestamp=none --generate-entitlement-der \
+            --entitlements src/ios/FileProvider/FileProvider.entitlements \
+            "$APP/PlugIns/MinisFileProvider.appex"
+          codesign --force --sign - --timestamp=none --generate-entitlement-der \
+            --entitlements src/ios/AgentWidget/AgentWidget.entitlements \
+            "$APP/PlugIns/AgentWidgetExtension.appex"
+          codesign --force --sign - --timestamp=none --generate-entitlement-der \
+            --entitlements src/ios/Minis.entitlements "$APP"
+          codesign --verify --deep --strict "$APP"
+          codesign -d --entitlements :- "$APP"
+
+      - name: Package TIPA
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/Minis.app"
+          test -d "$APP"
+          rm -rf "$RUNNER_TEMP/package"
           mkdir -p "$RUNNER_TEMP/package/Payload"
-          cp -R "$APP" "$RUNNER_TEMP/package/Payload/"
+          ditto "$APP" "$RUNNER_TEMP/package/Payload/Minis.app"
           cd "$RUNNER_TEMP/package"
-          /usr/bin/zip -qry "$GITHUB_WORKSPACE/Minis-GoDog-custom.tipa" Payload
-          shasum -a 256 "$GITHUB_WORKSPACE/Minis-GoDog-custom.tipa" > "$GITHUB_WORKSPACE/Minis-GoDog-custom.tipa.sha256"
+          /usr/bin/zip -qry "$GITHUB_WORKSPACE/Minis-GoDog-custom-fixed.tipa" Payload
+          shasum -a 256 "$GITHUB_WORKSPACE/Minis-GoDog-custom-fixed.tipa" > "$GITHUB_WORKSPACE/Minis-GoDog-custom-fixed.tipa.sha256"
 
       - name: Upload TIPA
         uses: actions/upload-artifact@v4
         with:
-          name: Minis-GoDog-custom-tipa
+          name: Minis-GoDog-custom-fixed-tipa
           path: |
-            Minis-GoDog-custom.tipa
-            Minis-GoDog-custom.tipa.sha256
+            Minis-GoDog-custom-fixed.tipa
+            Minis-GoDog-custom-fixed.tipa.sha256
           if-no-files-found: error
           retention-days: 30

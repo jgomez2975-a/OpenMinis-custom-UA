@@ -1045,7 +1045,17 @@ struct MinisApp: App {
     private static func migrateSharedDirToAppGroup() {
         let fm = FileManager.default
         let library = fm.urls(for: .libraryDirectory, in: .userDomainMask).first!
-        let container = fm.containerURL(forSecurityApplicationGroupIdentifier: "group.com.openminis.app")!
+        // TrollStore / ad-hoc installs may temporarily launch before the App
+        // Group entitlement has been materialized. Migration is best-effort;
+        // never crash the whole app just because the shared container is
+        // unavailable. The canonical path helpers already provide a safe
+        // Library fallback for this case.
+        guard let container = fm.containerURL(
+            forSecurityApplicationGroupIdentifier: "group.com.openminis.app"
+        ) else {
+            lifecycleLog.warning("[FileProvider] App Group unavailable; skipping legacy shared-dir migration")
+            return
+        }
 
         let migrations: [(source: URL, dest: URL, label: String)] = [
             // Legacy Library/MinisChat/shared → new shared
