@@ -413,6 +413,7 @@ extension AIChatViewModel {
         activeGroupId: inout String?,
         activeEntryId: inout String?
     ) async throws -> StreamResult {
+        let effectiveRequiredModalities = requiredFallbackModalities(messages: messages)
         // Track entries we've gotten empty responses from to avoid infinite loops.
         var emptyResponseEntries: Set<String> = []
 
