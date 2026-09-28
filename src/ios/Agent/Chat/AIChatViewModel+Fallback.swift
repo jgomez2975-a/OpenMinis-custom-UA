@@ -6,7 +6,26 @@ private let logger = AppLogger(category: "AIChatVM")
 
 extension AIChatViewModel {
 
-    // MARK: - Auto-Retry on Network Errors
+    /// Required input capabilities for this turn. Fallback must never move a
+    /// media request onto a text-only model, because that creates a cascade of
+    /// predictable 400s that looks like a provider outage.
+    private func requiredFallbackModalities(messages: [AgentMessage]) -> ModelModality {
+        var required: ModelModality = []
+        for message in messages {
+            for part in message.parts {
+                switch part {
+                case .imageData:
+                    required.insert(.imageInput)
+                case .toolResult(_, _, _, _, let imageData, _, _, _):
+                    if imageData != nil { required.insert(.imageInput) }
+                default:
+                    break
+                }
+            }
+        }
+        return required
+    }
+
 
     static let retryDelays = [3, 5, 10, 15, 30]
 
@@ -102,9 +121,12 @@ extension AIChatViewModel {
         lastContextTokens: Int = 0,
         chatMessage: ChatMessage?,
         activeGroupId: inout String?,
-        activeEntryId: inout String?
+        activeEntryId: inout String?,
+        requiredModalities: ModelModality = []
     ) async throws -> AsyncThrowingStream<AgentStreamEvent, Error> {
-        var currentProvider = initialProvider
+        let effectiveRequiredModalities = requiredModalities.isEmpty
+            ? requiredFallbackModalities(messages: messages)
+            : requiredModalities
         var currentSystemPrompt = initialSystemPrompt
         var currentEntryId = activeEntryId
         var triedEntries: Set<String> = []
@@ -188,7 +210,8 @@ extension AIChatViewModel {
                 }
 
                 let nextEntryId = ModelGroupRouter.nextFallback(
-                    group: group, currentEntryId: currentEid, store: ProviderConfigStore.shared
+                    group: group, currentEntryId: currentEid, store: ProviderConfigStore.shared,
+                    requiredModalities: effectiveRequiredModalities
                 )
                 logger.info("🔀ROUTE nextFallback returned: \(nextEntryId ?? "nil")")
 
@@ -196,7 +219,10 @@ extension AIChatViewModel {
                       !triedEntries.contains(nextEntryId),
                       let nextEntry = ProviderConfigStore.shared.entry(for: nextEntryId) else {
                     logger.error("🔀ROUTE exhausted: nextEntryId=\(nextEntryId ?? "nil") alreadyTried=\(nextEntryId.map { triedEntries.contains($0) } ?? false)")
-                    let skipped = ModelGroupRouter.unavailableMembers(group: group, store: ProviderConfigStore.shared)
+                    let skipped = ModelGroupRouter.unavailableMembers(
+                        group: group, store: ProviderConfigStore.shared,
+                        requiredModalities: effectiveRequiredModalities
+                    )
                     fallbackReasons.append(contentsOf: skipped)
                     if !fallbackReasons.isEmpty {
                         let trailLines = fallbackReasons.map { "⚠️ \($0.model) (\($0.instance)): \($0.reason)" }
@@ -250,7 +276,10 @@ extension AIChatViewModel {
                           !triedEntries.contains(nextEntryId),
                           let nextEntry = ProviderConfigStore.shared.entry(for: nextEntryId) else {
                         logger.error("🔀ROUTE always-strategy exhausted: nextEntryId=\(nextEntryId ?? "nil") alreadyTried=\(nextEntryId.map { triedEntries.contains($0) } ?? false)")
-                        let skipped = ModelGroupRouter.unavailableMembers(group: group, store: ProviderConfigStore.shared)
+                        let skipped = ModelGroupRouter.unavailableMembers(
+                        group: group, store: ProviderConfigStore.shared,
+                        requiredModalities: effectiveRequiredModalities
+                    )
                         fallbackReasons.append(contentsOf: skipped)
                         if !fallbackReasons.isEmpty {
                             let trailLines = fallbackReasons.map { "⚠️ \($0.model) (\($0.instance)): \($0.reason)" }
@@ -332,7 +361,10 @@ extension AIChatViewModel {
                           !triedEntries.contains(nextEntryId),
                           let nextEntry = ProviderConfigStore.shared.entry(for: nextEntryId) else {
                         logger.error("🔀ROUTE exhausted all entries after retry: nextEntryId=\(nextEntryId ?? "nil") alreadyTried=\(nextEntryId.map { triedEntries.contains($0) } ?? false)")
-                        let skipped = ModelGroupRouter.unavailableMembers(group: group, store: ProviderConfigStore.shared)
+                        let skipped = ModelGroupRouter.unavailableMembers(
+                        group: group, store: ProviderConfigStore.shared,
+                        requiredModalities: effectiveRequiredModalities
+                    )
                         fallbackReasons.append(contentsOf: skipped)
                         if !fallbackReasons.isEmpty {
                             let trailLines = fallbackReasons.map { "⚠️ \($0.model) (\($0.instance)): \($0.reason)" }
@@ -465,7 +497,8 @@ extension AIChatViewModel {
             if let gid = activeGroupId, let currentEid = activeEntryId,
                let group = ProviderConfigStore.shared.group(for: gid) {
                 let nextEid = ModelGroupRouter.nextFallback(
-                    group: group, currentEntryId: currentEid, store: ProviderConfigStore.shared
+                    group: group, currentEntryId: currentEid, store: ProviderConfigStore.shared,
+                    requiredModalities: effectiveRequiredModalities
                 )
                 if let nextEid, !emptyResponseEntries.contains(nextEid) {
                     logger.info("🔀ROUTE-CONTENT manually advancing: \(currentEid) → \(nextEid)")

@@ -40,9 +40,10 @@ enum ModelGroupRouter {
     static func nextFallback(
         group: ModelGroup,
         currentEntryId: String,
-        store: ProviderConfigStore
+        store: ProviderConfigStore,
+        requiredModalities: ModelModality = []
     ) -> String? {
-        let available = availableEntryIds(group: group, store: store)
+        let available = availableEntryIds(group: group, store: store, requiredModalities: requiredModalities)
         logger.info("🔀ROUTE nextFallback current=\(currentEntryId) available=\(available)")
         guard let currentIdx = available.firstIndex(of: currentEntryId) else {
             // Current entry not found in available list — try first available
@@ -70,14 +71,17 @@ enum ModelGroupRouter {
 
     /// Returns group members that were filtered out (unavailable) with reasons.
     static func unavailableMembers(
-        group: ModelGroup, store: ProviderConfigStore
+        group: ModelGroup, store: ProviderConfigStore,
+        requiredModalities: ModelModality = []
     ) -> [(model: String, instance: String, reason: String)] {
         var result: [(model: String, instance: String, reason: String)] = []
         for entryId in group.memberEntryIds {
             guard let entry = store.entry(for: entryId) else { continue }
             guard let inst = store.instance(for: entry.providerInstanceId) else { continue }
             let label = inst.label
-            if entry.isHidden {
+            if !requiredModalities.isEmpty && !entry.model.capabilities.supportedModalities.contains(requiredModalities) {
+                result.append((model: entry.model.displayName, instance: label, reason: "不支持当前输入能力"))
+            } else if entry.isHidden {
                 result.append((model: entry.model.displayName, instance: label, reason: AppLocalized("Hidden")))
             } else if !inst.isEnabled {
                 result.append((model: entry.model.displayName, instance: label, reason: AppLocalized("Disabled")))
@@ -98,14 +102,22 @@ enum ModelGroupRouter {
     /// a 403 `OAuth authentication is currently not allowed for this
     /// organization`. The factory would still build a provider for it, but
     /// the request would fail immediately and waste a fallback slot.
-    private static func availableEntryIds(group: ModelGroup, store: ProviderConfigStore) -> [String] {
+    private static func availableEntryIds(
+        group: ModelGroup,
+        store: ProviderConfigStore,
+        requiredModalities: ModelModality = []
+    ) -> [String] {
         group.memberEntryIds.filter { entryId in
             guard let entry = store.entry(for: entryId) else {
                 logger.warning("🔀ROUTE filter: entry \(entryId) not found in store")
                 return false
             }
             guard !entry.isHidden else {
-                logger.info("🔀ROUTE filter: entry \(entryId) is hidden")
+                logger.info("🔀ROUTE filter: entry \(entry.id) is hidden")
+                return false
+            }
+            guard requiredModalities.isEmpty || entry.model.capabilities.supportedModalities.contains(requiredModalities) else {
+                logger.info("🔀ROUTE filter: \(entry.model.id) lacks required modalities \(requiredModalities.rawValue)")
                 return false
             }
             guard let instance = store.instance(for: entry.providerInstanceId) else {
