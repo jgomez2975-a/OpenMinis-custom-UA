@@ -127,6 +127,7 @@ extension AIChatViewModel {
         let effectiveRequiredModalities = requiredModalities.isEmpty
             ? requiredFallbackModalities(messages: messages)
             : requiredModalities
+        var currentProvider = initialProvider
         var currentSystemPrompt = initialSystemPrompt
         var currentEntryId = activeEntryId
         var triedEntries: Set<String> = []
